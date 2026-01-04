@@ -1,3 +1,14 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import io
+import matplotlib
+matplotlib.use('Agg')  # Set backend sebelum import pyplot
+import matplotlib.pyplot as plt
+import seaborn as sns
+import shap
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 # ==============================================================================
 # 1. KONFIGURASI HALAMAN
@@ -11,6 +22,9 @@ st.set_page_config(
 st.title("📊 Dashboard XAI: Evaluasi Kesehatan Finansial UPZ BAZNAS")
 st.markdown("""
 Aplikasi ini menggunakan **Machine Learning (Regresi Linear)** yang dijelaskan dengan **XAI (SHAP)** untuk mengevaluasi faktor penentu kesehatan finansial (ACR) pada Unit Pengumpul Zakat.
+
+**ACR (Allocation to Collection Ratio)** = (Penyaluran / Pengumpulan) × 100%  
+Semakin tinggi ACR, semakin efektif UPZ dalam menyalurkan dana yang terkumpul.
 """)
 
 # ==============================================================================
@@ -18,7 +32,6 @@ Aplikasi ini menggunakan **Machine Learning (Regresi Linear)** yang dijelaskan d
 # ==============================================================================
 @st.cache_data
 def load_data():
-    # Data hardcoded agar deploy stabil tanpa upload file manual
     csv_data = """Wilayah,Zakat_Maal_2022,Zakat_Maal_2023,Zakat_Fitrah_2022,Zakat_Fitrah_2023,Infak_2022,Infak_2023,DSKL_2022,DSKL_2023,Penyaluran_2022,Penyaluran_2023,Total_Pengumpulan_2022,Total_Pengumpulan_2023,Pertumbuhan_Pengumpulan_Persen,ACR_2022_Persen,ACR_2023_Persen,Status_Kesehatan_2022,Status_Kesehatan_2023,Dominasi_Dana_2023,Region
 BAZNAS (Pusat),536640868868,645538065987,9656466631,11190355084,70230370082,306840514386,17340431740,14587006023,584585478559,675091571281,633868137321,978155941480,54.32,92.23,69.02,Sangat Efektif,Cukup Efektif,Maal,Pusat
 Nanggroe Aceh Darussalam,132179974814,175481487955,0,54641000,63389684576,65804768917,2135000,302850225,201380315240,285407294532,195571794390,241643748097,23.56,102.97,118.11,Sangat Efektif,Sangat Efektif,Maal,Sumatera
@@ -68,11 +81,9 @@ target_variable = 'ACR_2023_Persen'
 X_raw = df[features_to_use]
 y = df[target_variable]
 
-# One-Hot Encoding
 X_processed = pd.get_dummies(X_raw, columns=['Region', 'Dominasi_Dana_2023'], drop_first=False)
 X_processed = X_processed.astype(int)
 
-# Train Model
 model = LinearRegression()
 model.fit(X_processed, y)
 y_pred = model.predict(X_processed)
@@ -80,7 +91,6 @@ r2 = r2_score(y, y_pred)
 mae = mean_absolute_error(y, y_pred)
 rmse = np.sqrt(mean_squared_error(y, y_pred))
 
-# Init Explainer di awal (Global)
 explainer = shap.LinearExplainer(model, X_processed)
 shap_values = explainer.shap_values(X_processed)
 
@@ -88,164 +98,383 @@ shap_values = explainer.shap_values(X_processed)
 # 4. TAMPILAN DASHBOARD
 # ==============================================================================
 
-# Membuat Tabs
 tab1, tab2, tab3, tab4 = st.tabs(["📂 Data Overview", "📈 Performa Model", "🧠 XAI Explanation (SHAP)", "💡 Simulasi Prediksi"])
 
+# ==============================================================================
+# TAB 1: DATA OVERVIEW
+# ==============================================================================
 with tab1:
     st.subheader("📋 Data Laporan Keuangan BAZNAS")
     st.markdown("""
-    **Penjelasan:** Tabel ini menampilkan data keuangan dari seluruh UPZ (Unit Pengumpul Zakat) BAZNAS di Indonesia. 
-    Data mencakup pengumpulan dana Zakat Maal, Fitrah, Infak, DSKL, serta penyaluran dan ACR (Allocation to Collection Ratio) 
-    yang menjadi indikator kesehatan finansial.
+    ### Apa itu data ini?
+    Tabel ini menampilkan **data keuangan dari 36 UPZ (Unit Pengumpul Zakat)** BAZNAS di seluruh Indonesia untuk tahun 2022-2023.
+    
+    **Kolom penting:**
+    - **Zakat Maal**: Zakat harta (emas, uang, bisnis, dll)
+    - **Zakat Fitrah**: Zakat yang dibayar saat Ramadan
+    - **Infak**: Sumbangan sukarela dari umat
+    - **DSKL**: Dana Sosial Kemanusiaan Lainnya
+    - **ACR (Allocation to Collection Ratio)**: Persentase dana yang disalurkan dibanding dana yang dikumpulkan
+        - **ACR ≥ 100%**: Penyaluran ≥ Pengumpulan (Sangat Efektif)
+        - **ACR 80-99%**: Efektif
+        - **ACR 60-79%**: Cukup Efektif  
+        - **ACR < 60%**: Kurang/Tidak Efektif
+    
+    **Insight:** Data ini digunakan untuk melatih model prediksi kesehatan finansial UPZ.
     """)
-    st.dataframe(df, use_container_width=True)
+    
+    with st.expander("🔍 Lihat Data Lengkap"):
+        st.dataframe(df, use_container_width=True, height=400)
+    
+    st.write("---")
     
     col1, col2 = st.columns(2)
+    
     with col1:
-        st.write("📊 **Statistik Deskriptif ACR 2023:**")
+        st.write("### 📊 Statistik Deskriptif ACR 2023")
         st.markdown("""
-        Statistik ini menunjukkan distribusi nilai ACR 2023 di seluruh UPZ. 
-        - **Mean (rata-rata)**: ACR rata-rata nasional
-        - **Std (standar deviasi)**: Variasi ACR antar wilayah
-        - **Min/Max**: Rentang kinerja terendah hingga tertinggi
+        **Cara membaca:**
+        - **Count**: Jumlah UPZ yang dianalisis (36 wilayah)
+        - **Mean**: Rata-rata ACR nasional
+        - **Std**: Variasi ACR antar wilayah (semakin besar = semakin beragam)
+        - **Min**: ACR terendah (wilayah dengan kinerja penyaluran terendah)
+        - **25%, 50%, 75%**: Kuartil distribusi ACR
+        - **Max**: ACR tertinggi
+        
+        **Interpretasi:** Jika mean mendekati 100%, berarti rata-rata UPZ efektif menyalurkan dana yang terkumpul.
         """)
-        st.write(df['ACR_2023_Persen'].describe())
+        stats_df = df['ACR_2023_Persen'].describe().to_frame()
+        stats_df.columns = ['Nilai']
+        st.dataframe(stats_df.style.format("{:.2f}"), use_container_width=True)
     
     with col2:
-        st.write("🗺️ **Distribusi Jumlah UPZ per Region:**")
+        st.write("### 🗺️ Distribusi UPZ per Region")
         st.markdown("""
-        Grafik ini menunjukkan sebaran UPZ berdasarkan region geografis di Indonesia.
-        Region dengan lebih banyak UPZ umumnya memiliki pengaruh lebih besar dalam analisis model.
+        **Penjelasan:**  
+        Grafik batang ini menunjukkan jumlah UPZ di setiap region geografis Indonesia.
+        
+        **Insight:**
+        - Region dengan lebih banyak UPZ (seperti Jawa, Sumatera) memiliki pengaruh lebih besar dalam model
+        - Wilayah dengan sedikit UPZ (Pusat, Bali_Nusa, Maluku_Papua) mungkin kurang representatif
         """)
-        st.bar_chart(df['Region'].value_counts())
+        region_counts = df['Region'].value_counts()
+        st.bar_chart(region_counts)
+        st.caption(f"Total: {len(df)} UPZ di {df['Region'].nunique()} region")
     
-    st.write("🎯 **Distribusi Status Kesehatan 2023:**")
+    st.write("---")
+    
+    st.write("### 🎯 Distribusi Status Kesehatan 2023")
     st.markdown("""
-    Kategorisasi kesehatan finansial UPZ berdasarkan nilai ACR:
-    - **Sangat Efektif**: ACR ≥ 100% (penyaluran melebihi atau sama dengan pengumpulan)
-    - **Efektif**: ACR 80-99%
-    - **Cukup Efektif**: ACR 60-79%
-    - **Kurang Efektif**: ACR < 60%
+    **Penjelasan:**  
+    Grafik ini menunjukkan berapa banyak UPZ di setiap kategori kesehatan finansial.
+    
+    **Kategorisasi:**
+    - ⭐⭐⭐ **Sangat Efektif**: ACR ≥ 100% (penyaluran maksimal)
+    - ⭐⭐ **Efektif**: ACR 80-99%
+    - ⭐ **Cukup Efektif**: ACR 60-79%
+    - ⚠️ **Kurang/Tidak Efektif**: ACR < 60%
     """)
-    status_counts = df['Status_Kesehatan_2023'].value_counts()
-    st.bar_chart(status_counts)
+    status_counts = df['Status_Kesehatan_2023'].value_counts().sort_index()
+    fig_status, ax_status = plt.subplots(figsize=(10, 5))
+    colors = {'Sangat Efektif': '#2ecc71', 'Efektif': '#3498db', 
+              'Cukup Efektif': '#f39c12', 'Kurang Efektif': '#e74c3c', 'Tidak Efektif': '#c0392b'}
+    bars = ax_status.bar(status_counts.index, status_counts.values, 
+                         color=[colors.get(x, '#95a5a6') for x in status_counts.index])
+    ax_status.set_ylabel('Jumlah UPZ', fontsize=12)
+    ax_status.set_xlabel('Status Kesehatan', fontsize=12)
+    ax_status.set_title('Distribusi Status Kesehatan Finansial UPZ 2023', fontsize=14, fontweight='bold')
+    for bar in bars:
+        height = bar.get_height()
+        ax_status.text(bar.get_x() + bar.get_width()/2., height,
+                      f'{int(height)}', ha='center', va='bottom', fontsize=10)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    st.pyplot(fig_status, clear_figure=True)
+    plt.close()
+    
+    st.write("---")
+    
+    st.write("### 💰 Dominasi Jenis Dana 2023")
+    st.markdown("""
+    **Penjelasan:**  
+    Grafik ini menunjukkan sumber dana utama yang dikumpulkan UPZ.
+    
+    **Insight:** Jenis dana yang dominan dapat mempengaruhi ACR karena karakteristik penyaluran yang berbeda.
+    """)
+    dominasi_counts = df['Dominasi_Dana_2023'].value_counts()
+    fig_dom, ax_dom = plt.subplots(figsize=(8, 5))
+    ax_dom.pie(dominasi_counts.values, labels=dominasi_counts.index, autopct='%1.1f%%', 
+               colors=['#3498db', '#e74c3c', '#f39c12', '#9b59b6'], startangle=90)
+    ax_dom.set_title('Proporsi Dominasi Dana UPZ 2023', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    st.pyplot(fig_dom, clear_figure=True)
+    plt.close()
 
+# ==============================================================================
+# TAB 2: PERFORMA MODEL
+# ==============================================================================
 with tab2:
     st.subheader("📈 Evaluasi Performa Model Regresi Linear")
     st.markdown("""
-    Model regresi linear digunakan untuk memprediksi ACR berdasarkan 3 fitur utama:
-    1. **Region** (lokasi geografis UPZ)
-    2. **Dominasi Dana 2023** (jenis dana yang paling banyak dikumpulkan)
-    3. **Pertumbuhan Pengumpulan (%)** (persentase peningkatan pengumpulan dana)
+    ### Tentang Model
+    Model **Regresi Linear** digunakan untuk memprediksi **ACR 2023** berdasarkan 3 fitur:
+    
+    1. 🗺️ **Region** (lokasi geografis UPZ)
+    2. 💰 **Dominasi Dana 2023** (jenis dana utama: Maal, Infak, DSKL, atau Fitrah)
+    3. 📈 **Pertumbuhan Pengumpulan (%)** (persentase peningkatan pengumpulan dana tahun 2023 vs 2022)
+    
+    **Rumus Model:**  
+    `ACR = β₀ + β₁(Region) + β₂(Dominasi_Dana) + β₃(Pertumbuhan_Pengumpulan)`
+    """)
+    
+    st.write("---")
+    
+    st.write("### 🎯 Metrik Evaluasi Model")
+    st.markdown("""
+    Metrik ini mengukur seberapa baik model memprediksi ACR:
     """)
     
     col_metric1, col_metric2, col_metric3 = st.columns(3)
-    with col_metric1:
-        st.metric("R-Squared Score", f"{r2:.4f}", 
-                 help="Proporsi variasi ACR yang dapat dijelaskan model. Nilai 1.0 = sempurna, >0.7 = baik")
-    with col_metric2:
-        st.metric("MAE", f"{mae:.2f}%", 
-                 help="Mean Absolute Error: rata-rata selisih absolut prediksi dengan nilai aktual")
-    with col_metric3:
-        st.metric("RMSE", f"{rmse:.2f}%", 
-                 help="Root Mean Squared Error: mengukur akurasi prediksi dengan memberi penalti lebih pada error besar")
     
-    # Scatter Plot
+    with col_metric1:
+        st.metric("R² Score", f"{r2:.4f}")
+        st.markdown("""
+        **R-Squared (Koefisien Determinasi)**  
+        Mengukur proporsi variasi ACR yang dijelaskan model.
+        
+        - **1.0** = Model sempurna (100% akurat)
+        - **0.7-1.0** = Model baik
+        - **0.5-0.7** = Model cukup
+        - **< 0.5** = Model lemah
+        
+        **Nilai Anda:** Model menjelaskan **{:.1f}%** variasi ACR.
+        """.format(r2 * 100))
+    
+    with col_metric2:
+        st.metric("MAE", f"{mae:.2f}%")
+        st.markdown("""
+        **Mean Absolute Error**  
+        Rata-rata selisih absolut antara prediksi dan nilai aktual.
+        
+        - Semakin kecil semakin baik
+        - Dalam satuan % ACR
+        
+        **Interpretasi:** Rata-rata error prediksi adalah **±{:.2f}%** ACR.
+        """.format(mae))
+    
+    with col_metric3:
+        st.metric("RMSE", f"{rmse:.2f}%")
+        st.markdown("""
+        **Root Mean Squared Error**  
+        Mengukur akurasi dengan memberi penalti lebih pada error besar.
+        
+        - Lebih sensitif terhadap outlier
+        - Dalam satuan % ACR
+        
+        **Interpretasi:** Error prediksi terbobot adalah **{:.2f}%** ACR.
+        """.format(rmse))
+    
+    st.write("---")
+    
     st.write("### 📊 Scatter Plot: Prediksi vs Nilai Aktual")
     st.markdown("""
-    **Cara Membaca:**
-    - **Sumbu X**: Nilai ACR yang diprediksi oleh model
-    - **Sumbu Y**: Nilai ACR aktual dari data
+    **Cara Membaca Grafik:**
+    - **Sumbu X (horizontal)**: Nilai ACR yang diprediksi model
+    - **Sumbu Y (vertikal)**: Nilai ACR aktual dari data
     - **Garis merah putus-putus**: Garis ideal (prediksi = aktual)
-    - Semakin dekat titik ke garis merah, semakin akurat prediksi
-    - Warna berbeda menunjukkan region yang berbeda
+    - **Jarak titik dari garis merah**: Menunjukkan error prediksi
+        - Titik di atas garis = model underprediction (prediksi < aktual)
+        - Titik di bawah garis = model overprediction (prediksi > aktual)
+    - **Warna titik**: Menunjukkan region geografis
+    
+    **Interpretasi yang Baik:**  
+    Jika semua titik dekat dengan garis merah, model akurat.
     """)
-    fig, ax = plt.subplots(figsize=(10, 5))
-    sns.scatterplot(x=y_pred, y=y, hue=df['Region'], s=100, ax=ax, alpha=0.7)
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Scatter plot dengan warna per region
+    for region in df['Region'].unique():
+        mask = df['Region'] == region
+        ax.scatter(y_pred[mask], y[mask], label=region, s=120, alpha=0.7, edgecolors='black', linewidth=0.5)
+    
+    # Garis ideal
     min_val = min(min(y), min(y_pred))
     max_val = max(max(y), max(y_pred))
-    ax.plot([min_val, max_val], [min_val, max_val], color='red', linestyle='--', linewidth=2, label='Garis Ideal (y=x)')
-    ax.set_xlabel("Prediksi ACR (%)", fontsize=12)
-    ax.set_ylabel("Nilai Aktual ACR (%)", fontsize=12)
-    ax.set_title("Prediksi Model vs Nilai Aktual", fontsize=14, fontweight='bold')
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    st.pyplot(fig)
-
-    # Koefisien
-    st.write("### ⚖️ Bobot Koefisien Model")
-    st.markdown("""
-    **Penjelasan:** Tabel ini menunjukkan kontribusi setiap fitur terhadap prediksi ACR.
-    - **Bobot positif (+)**: Fitur ini meningkatkan nilai ACR
-    - **Bobot negatif (-)**: Fitur ini menurunkan nilai ACR
-    - **Bobot mendekati 0**: Fitur ini memiliki pengaruh minimal
+    ax.plot([min_val, max_val], [min_val, max_val], color='red', linestyle='--', linewidth=2.5, label='Garis Ideal (y=x)', zorder=5)
     
-    Fitur dengan bobot absolut tertinggi memiliki pengaruh paling kuat terhadap prediksi.
+    ax.set_xlabel("Prediksi ACR (%)", fontsize=13, fontweight='bold')
+    ax.set_ylabel("Nilai Aktual ACR (%)", fontsize=13, fontweight='bold')
+    ax.set_title("Perbandingan Prediksi Model vs Nilai Aktual ACR", fontsize=15, fontweight='bold')
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+    ax.grid(True, alpha=0.3, linestyle='--')
+    plt.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+    plt.close()
+    
+    st.caption("💡 **Tip:** Hover pada legenda untuk melihat region. Titik yang mengelompok dekat garis merah menunjukkan prediksi akurat.")
+    
+    st.write("---")
+    
+    st.write("### ⚖️ Bobot Koefisien Model (Feature Weights)")
+    st.markdown("""
+    **Penjelasan:**  
+    Tabel ini menunjukkan kontribusi setiap fitur terhadap prediksi ACR.
+    
+    **Cara Membaca:**
+    - **Bobot Positif (+)**: Fitur ini **meningkatkan** nilai ACR
+    - **Bobot Negatif (-)**: Fitur ini **menurunkan** nilai ACR
+    - **Bobot Besar (absolut)**: Fitur ini memiliki pengaruh kuat
+    - **Bobot Kecil (~0)**: Fitur ini hampir tidak berpengaruh
+    
+    **Contoh Interpretasi:**  
+    Jika `Region_Jawa = +15.2`, artinya UPZ di Jawa cenderung memiliki ACR **15.2% lebih tinggi** dari baseline (region lain).
+    
+    **Warna:**
+    - 🟢 **Hijau** = Koefisien positif (meningkatkan ACR)
+    - 🔴 **Merah** = Koefisien negatif (menurunkan ACR)
     """)
+    
     coef_df = pd.DataFrame({
         'Fitur': X_processed.columns, 
-        'Bobot': model.coef_
-    }).sort_values(by='Bobot', ascending=False)
+        'Bobot (Koefisien)': model.coef_
+    }).sort_values(by='Bobot (Koefisien)', key=lambda x: abs(x), ascending=False)
     
-    # Highlight positif/negatif
-    def highlight_coef(val):
-        if isinstance(val, (int, float)):
-            color = 'background-color: #90EE90' if val > 0 else 'background-color: #FFB6C6'
-            return color
-        return ''
+    coef_df['Dampak'] = coef_df['Bobot (Koefisien)'].apply(
+        lambda x: '↑ Meningkatkan ACR' if x > 0 else '↓ Menurunkan ACR'
+    )
     
-    st.dataframe(coef_df.style.applymap(highlight_coef, subset=['Bobot']), use_container_width=True)
+    def highlight_coef(row):
+        if row['Bobot (Koefisien)'] > 0:
+            return ['background-color: #d4edda']*len(row)
+        elif row['Bobot (Koefisien)'] < 0:
+            return ['background-color: #f8d7da']*len(row)
+        else:
+            return ['']*len(row)
+    
+    st.dataframe(
+        coef_df.style.apply(highlight_coef, axis=1).format({'Bobot (Koefisien)': "{:.4f}"}),
+        use_container_width=True,
+        height=400
+    )
+    
+    st.write("---")
+    
+    st.write("### 📊 Visualisasi Koefisien (Top 10)")
+    fig_coef, ax_coef = plt.subplots(figsize=(10, 6))
+    
+    top_coef = coef_df.head(10)
+    colors_coef = ['#2ecc71' if x > 0 else '#e74c3c' for x in top_coef['Bobot (Koefisien)']]
+    
+    ax_coef.barh(top_coef['Fitur'], top_coef['Bobot (Koefisien)'], color=colors_coef, edgecolor='black')
+    ax_coef.set_xlabel('Bobot Koefisien', fontsize=12, fontweight='bold')
+    ax_coef.set_ylabel('Fitur', fontsize=12, fontweight='bold')
+    ax_coef.set_title('Top 10 Fitur dengan Pengaruh Terbesar', fontsize=14, fontweight='bold')
+    ax_coef.axvline(0, color='black', linestyle='-', linewidth=1)
+    ax_coef.grid(axis='x', alpha=0.3)
+    plt.tight_layout()
+    st.pyplot(fig_coef, clear_figure=True)
+    plt.close()
+    
+    st.caption("💡 **Insight:** Fitur di sebelah kanan garis 0 meningkatkan ACR, sebelah kiri menurunkan ACR.")
 
+# ==============================================================================
+# TAB 3: XAI SHAP
+# ==============================================================================
 with tab3:
     st.subheader("🧠 Interpretasi Model dengan SHAP (XAI)")
     st.markdown("""
-    **SHAP (SHapley Additive exPlanations)** adalah teknik XAI yang menjelaskan bagaimana setiap fitur 
-    mempengaruhi prediksi model dengan cara yang adil dan konsisten berdasarkan teori permainan.
+    ### Apa itu SHAP?
+    **SHAP (SHapley Additive exPlanations)** adalah teknik **Explainable AI (XAI)** yang menjelaskan 
+    bagaimana setiap fitur mempengaruhi prediksi model dengan cara yang **adil dan konsisten**, 
+    berdasarkan **teori permainan (Game Theory)**.
+    
+    **Keunggulan SHAP:**
+    - ✅ Menunjukkan kontribusi setiap fitur secara transparan
+    - ✅ Konsisten secara matematis (berbasis Shapley Values)
+    - ✅ Dapat mendeteksi interaksi antar fitur
+    - ✅ Berlaku untuk model apa pun (model-agnostic)
+    
+    **Konsep Kunci:**
+    - **SHAP Value > 0**: Fitur ini **meningkatkan** prediksi
+    - **SHAP Value < 0**: Fitur ini **menurunkan** prediksi
+    - **SHAP Value = 0**: Fitur ini tidak berpengaruh
     """)
+    
+    st.write("---")
     
     st.write("### 1️⃣ Summary Plot (Beeswarm)")
     st.markdown("""
-    **Cara Membaca Grafik Ini:**
-    - **Sumbu Y**: Daftar fitur yang diurutkan berdasarkan kepentingan (paling penting di atas)
-    - **Sumbu X**: Nilai SHAP (pengaruh terhadap prediksi)
-        - Nilai positif (kanan): Fitur ini meningkatkan ACR
-        - Nilai negatif (kiri): Fitur ini menurunkan ACR
-    - **Warna titik**:
-        - 🔴 **Merah**: Nilai fitur tinggi
-        - 🔵 **Biru**: Nilai fitur rendah
-    - **Sebaran titik**: Menunjukkan variasi dampak fitur di berbagai data
+    **Grafik ini adalah "peta pengaruh" dari semua fitur terhadap prediksi ACR.**
+    
+    **Cara Membaca:**
+    - **Sumbu Y**: Fitur-fitur diurutkan dari **paling penting (atas)** hingga kurang penting (bawah)
+    - **Sumbu X**: Nilai SHAP (dampak terhadap prediksi)
+        - **Kanan (positif)**: Fitur ini **meningkatkan** ACR
+        - **Kiri (negatif)**: Fitur ini **menurunkan** ACR
+        - **Sekitar 0**: Fitur ini tidak berdampak signifikan
+    - **Warna Titik**:
+        - 🔴 **Merah/Pink**: Nilai fitur **tinggi** (feature value = high)
+        - 🔵 **Biru**: Nilai fitur **rendah** (feature value = low)
+    - **Sebaran Titik**: Menunjukkan variasi dampak fitur di berbagai data
     
     **Contoh Interpretasi:**  
-    Jika "Region_Jawa" memiliki banyak titik merah di sebelah kanan, artinya UPZ di Jawa 
-    cenderung memiliki ACR lebih tinggi.
+    Jika fitur "Region_Jawa" memiliki banyak titik merah di sebelah **kanan** (positif):
+    - Artinya: UPZ di Jawa (nilai fitur = 1 = merah) cenderung **meningkatkan ACR**
+    
+    Jika "Pertumbuhan_Pengumpulan_Persen" memiliki titik merah di kanan dan biru di kiri:
+    - Artinya: Pertumbuhan tinggi → ACR naik, Pertumbuhan rendah → ACR turun
     """)
     
-    fig_shap, ax_shap = plt.subplots(figsize=(10, 8))
-    shap.summary_plot(shap_values, X_processed, show=False, plot_size=None)
+    fig_shap = plt.figure(figsize=(12, 10))
+    shap.summary_plot(shap_values, X_processed, show=False)
+    plt.title("SHAP Summary Plot: Pengaruh Fitur terhadap Prediksi ACR", fontsize=14, fontweight='bold', pad=20)
+    plt.xlabel("SHAP Value (Dampak terhadap Prediksi ACR)", fontsize=12, fontweight='bold')
     plt.tight_layout()
-    st.pyplot(fig_shap)
+    st.pyplot(fig_shap, clear_figure=True)
     plt.close()
-
+    
+    st.caption("💡 **Tip:** Fitur di posisi atas adalah yang paling berpengaruh dalam prediksi model.")
+    
+    st.write("---")
+    
     st.write("### 2️⃣ Bar Plot: Ranking Kepentingan Fitur")
     st.markdown("""
-    **Cara Membaca:**
-    - **Sumbu X**: Mean absolute SHAP value (rata-rata dampak mutlak)
-    - **Sumbu Y**: Fitur-fitur yang diurutkan dari paling penting ke kurang penting
+    **Grafik ini merangking fitur berdasarkan "seberapa sering mereka mempengaruhi prediksi".**
     
-    Grafik ini menunjukkan fitur mana yang **paling sering mempengaruhi** prediksi model, 
-    tanpa mempedulikan arah pengaruh (positif/negatif). Semakin panjang bar, semakin penting fitur tersebut.
+    **Cara Membaca:**
+    - **Sumbu X**: Mean |SHAP Value| (rata-rata dampak mutlak)
+        - Semakin besar nilai → Semakin penting fitur tersebut
+    - **Sumbu Y**: Fitur-fitur diurutkan dari **paling penting (atas)** ke kurang penting (bawah)
+    
+    **Perbedaan dengan Beeswarm:**
+    - **Beeswarm**: Menunjukkan **arah** pengaruh (positif/negatif)
+    - **Bar Plot**: Menunjukkan **besarnya** pengaruh (tanpa mempedulikan arah)
+    
+    **Interpretasi:**  
+    Grafik ini menjawab: **"Fitur mana yang paling sering digunakan model untuk membuat keputusan?"**
     """)
     
-    fig_bar, ax_bar = plt.subplots(figsize=(10, 8))
+    fig_bar = plt.figure(figsize=(12, 10))
     shap.summary_plot(shap_values, X_processed, plot_type="bar", show=False)
+    plt.title("SHAP Feature Importance: Ranking Kepentingan Fitur", fontsize=14, fontweight='bold', pad=20)
+    plt.xlabel("Mean |SHAP Value| (Rata-rata Dampak Mutlak)", fontsize=12, fontweight='bold')
     plt.tight_layout()
-    st.pyplot(fig_bar)
+    st.pyplot(fig_bar, clear_figure=True)
     plt.close()
     
-    st.write("### 3️⃣ Feature Importance Table")
+    st.caption("💡 **Tip:** Fitur dengan bar terpanjang adalah yang paling kritikal untuk akurasi model.")
+    
+    st.write("---")
+    
+    st.write("### 3️⃣ Tabel Feature Importance")
     st.markdown("""
-    **Tabel ranking numerik** dari kepentingan fitur berdasarkan nilai SHAP rata-rata.
+    **Tabel ranking numerik dari kepentingan fitur** berdasarkan nilai SHAP rata-rata.
+    
+    Kolom:
+    - **Fitur**: Nama fitur
+    - **Importance (mean |SHAP|)**: Rata-rata dampak mutlak fitur tersebut
+    - **Ranking**: Urutan kepentingan (1 = paling penting)
     """)
     
     feature_importance = pd.DataFrame({
@@ -253,20 +482,76 @@ with tab3:
         'Importance (mean |SHAP|)': np.abs(shap_values).mean(axis=0)
     }).sort_values(by='Importance (mean |SHAP|)', ascending=False).reset_index(drop=True)
     
-    st.dataframe(feature_importance, use_container_width=True)
+    feature_importance['Ranking'] = range(1, len(feature_importance) + 1)
+    feature_importance = feature_importance[['Ranking', 'Fitur', 'Importance (mean |SHAP|)']]
+    
+    st.dataframe(
+        feature_importance.style.format({'Importance (mean |SHAP|)': "{:.4f}"}),
+        use_container_width=True,
+        height=400
+    )
+    
+    st.write("---")
+    
+    st.write("### 🔍 Insight dari Analisis SHAP")
+    st.markdown(f"""
+    **Berdasarkan analisis SHAP di atas:**
+    
+    1. **Fitur paling penting:** `{feature_importance.iloc[0]['Fitur']}`  
+       → Fitur ini memiliki dampak terbesar dalam memprediksi ACR
+    
+    2. **Top 5 fitur berpengaruh:**
+    """)
+    
+    for idx, row in feature_importance.head(5).iterrows():
+        st.markdown(f"   {idx+1}. **{row['Fitur']}** (Importance: {row['Importance (mean |SHAP|)']:.4f})")
+    
+    st.markdown("""
+    3. **Rekomendasi untuk stakeholder:**
+       - Fokuskan perhatian pada fitur-fitur di ranking teratas
+       - Monitor wilayah/kategori dengan SHAP value negatif (menurunkan ACR)
+       - Perbaiki strategi pengumpulan di region dengan dampak negatif
+    """)
 
+# ==============================================================================
+# TAB 4: SIMULASI PREDIKSI
+# ==============================================================================
 with tab4:
     st.subheader("💡 Simulasi Prediksi Kesehatan Finansial")
     st.markdown("""
-    Gunakan form di bawah ini untuk memprediksi ACR dari UPZ baru atau skenario hipotesis.
-    Model akan memberikan prediksi ACR beserta **penjelasan visual** mengapa model memberikan nilai tersebut.
+    ### Tentang Simulasi Ini
+    Gunakan form di bawah untuk **memprediksi ACR dari UPZ baru** atau **skenario hipotesis**.
+    
+    **Manfaat:**
+    - 🎯 Estimasi kesehatan finansial UPZ baru sebelum operasional
+    - 📊 Analisis skenario "what-if" (misalnya: "Bagaimana jika pertumbuhan 50%?")
+    - 🔍 Pemahaman mendalam tentang faktor-faktor yang mempengaruhi ACR
+    
+    **Output:**
+    1. Prediksi nilai ACR (dalam %)
+    2. Status kesehatan finansial (Sangat Efektif / Efektif / Cukup / Kurang Efektif)
+    3. **Grafik Waterfall SHAP**: Penjelasan visual mengapa model memberikan prediksi tersebut
     """)
     
-    # Input User
+    st.write("---")
+    
+    st.write("### 📋 Input Parameter")
+    
     col_input1, col_input2 = st.columns(2)
+    
     with col_input1:
-        input_region = st.selectbox("🗺️ Pilih Region:", sorted(df['Region'].unique()))
-        input_dominasi = st.selectbox("💰 Dominasi Dana:", sorted(df['Dominasi_Dana_2023'].unique()))
+        input_region = st.selectbox(
+            "🗺️ Pilih Region:", 
+            sorted(df['Region'].unique()),
+            help="Pilih wilayah geografis UPZ. Region yang berbeda memiliki karakteristik ekonomi dan demografis yang berbeda."
+        )
+        
+        input_dominasi = st.selectbox(
+            "💰 Dominasi Dana:", 
+            sorted(df['Dominasi_Dana_2023'].unique()),
+            help="Jenis dana yang paling banyak dikumpulkan UPZ.\n- Maal: Zakat harta\n- Infak: Sumbangan sukarela\n- Fitrah: Zakat fitrah\n- DSKL: Dana sosial lainnya"
+        )
+    
     with col_input2:
         input_pertumbuhan = st.number_input(
             "📈 Pertumbuhan Pengumpulan (%)", 
@@ -274,66 +559,114 @@ with tab4:
             max_value=1000.0, 
             value=10.0,
             step=1.0,
-            help="Persentase pertumbuhan pengumpulan dana dibanding tahun lalu"
+            help="Persentase pertumbuhan pengumpulan dana dibanding tahun lalu.\n- Positif: Pertumbuhan\n- Negatif: Penurunan\n- 0: Stabil"
         )
-
-    if st.button("🚀 Prediksi ACR", type="primary"):
-        # 1. Siapkan data input
+        
+        st.info(f"""
+        **Parameter yang Anda pilih:**
+        - Region: **{input_region}**
+        - Dominasi Dana: **{input_dominasi}**
+        - Pertumbuhan: **{input_pertumbuhan}%**
+        """)
+    
+    st.write("---")
+    
+    if st.button("🚀 Prediksi ACR", type="primary", use_container_width=True):
+        # Preprocessing input
         input_data = pd.DataFrame({
             'Region': [input_region],
             'Dominasi_Dana_2023': [input_dominasi],
             'Pertumbuhan_Pengumpulan_Persen': [input_pertumbuhan]
         })
         
-        # 2. Preprocessing input agar sesuai dengan format training
         input_processed = pd.get_dummies(input_data, columns=['Region', 'Dominasi_Dana_2023'], drop_first=False)
         
-        # Menambahkan kolom yang hilang (jika ada) dengan nilai 0
         for col in X_processed.columns:
             if col not in input_processed.columns:
                 input_processed[col] = 0
         
-        # Urutkan kolom sesuai data training
         input_processed = input_processed[X_processed.columns]
         
-        # 3. Prediksi
+        # Prediksi
         pred_acr = model.predict(input_processed)[0]
         
         # Tentukan status kesehatan
         if pred_acr >= 100:
-            status = "Sangat Efektif ⭐⭐⭐"
+            status = "Sangat Efektif"
+            emoji = "⭐⭐⭐"
             color = "green"
+            desc = "UPZ ini menyalurkan dana sama dengan atau melebihi jumlah yang dikumpulkan. Kinerja optimal!"
         elif pred_acr >= 80:
-            status = "Efektif ⭐⭐"
+            status = "Efektif"
+            emoji = "⭐⭐"
             color = "blue"
+            desc = "UPZ ini menyalurkan sebagian besar dana yang dikumpulkan. Kinerja baik."
         elif pred_acr >= 60:
-            status = "Cukup Efektif ⭐"
+            status = "Cukup Efektif"
+            emoji = "⭐"
             color = "orange"
+            desc = "UPZ ini menyalurkan cukup banyak dana, namun masih bisa ditingkatkan."
         else:
-            status = "Kurang Efektif ⚠️"
+            status = "Kurang/Tidak Efektif"
+            emoji = "⚠️"
             color = "red"
+            desc = "UPZ ini menyalurkan kurang dari 60% dana yang dikumpulkan. Perlu perbaikan strategis."
         
-        st.success(f"### Prediksi Allocation to Collection Ratio (ACR): **{pred_acr:.2f}%**")
-        st.markdown(f"**Status Kesehatan Finansial:** :{color}[{status}]")
+        # Display hasil
+        st.success("### ✅ Prediksi Berhasil!")
         
-        # 4. Penjelasan Lokal dengan Waterfall Plot
+        col_result1, col_result2 = st.columns(2)
+        
+        with col_result1:
+            st.metric(
+                label="Prediksi ACR",
+                value=f"{pred_acr:.2f}%",
+                delta=f"{pred_acr - df['ACR_2023_Persen'].mean():.2f}% vs rata-rata nasional"
+            )
+        
+        with col_result2:
+            st.markdown(f"""
+            **Status Kesehatan Finansial:**  
+            :{color}[**{status} {emoji}**]
+            
+            {desc}
+            """)
+        
         st.write("---")
+        
+        # Waterfall Plot
         st.subheader("🔍 Mengapa model memprediksi angka tersebut?")
         st.markdown("""
-        **Grafik Waterfall di bawah ini** menunjukkan bagaimana model sampai pada prediksi tersebut:
+        **Grafik Waterfall di bawah ini** menunjukkan bagaimana model sampai pada prediksi tersebut **langkah demi langkah**.
         
-        - **E[f(x)] (Base Value)**: Nilai ACR rata-rata dari semua data training (nilai awal sebelum melihat fitur spesifik)
-        - **Panah merah (→)**: Fitur yang **menurunkan** prediksi dari base value
-        - **Panah biru (→)**: Fitur yang **meningkatkan** prediksi dari base value
-        - **f(x) (Final Prediction)**: Nilai prediksi akhir setelah semua fitur diperhitungkan
+        ### Cara Membaca Grafik Waterfall:
         
-        Grafik ini menunjukkan kontribusi setiap fitur secara transparan, dari nilai dasar hingga prediksi final.
+        1. **E[f(x)] (Base Value)**: 
+           - Nilai ACR **rata-rata dari semua data training**
+           - Ini adalah "titik awal" sebelum model melihat fitur spesifik input Anda
+           - Posisi: Paling bawah
+        
+        2. **Panah/Bar**:
+           - 🔴 **Merah (ke kiri)**: Fitur ini **menurunkan** prediksi dari base value
+           - 🔵 **Biru (ke kanan)**: Fitur ini **meningkatkan** prediksi dari base value
+           - **Panjang panah**: Menunjukkan seberapa besar dampak fitur tersebut
+        
+        3. **f(x) (Final Prediction)**:
+           - Nilai prediksi **akhir** setelah semua fitur diperhitungkan
+           - Posisi: Paling atas
+        
+        **Alur Pembacaan:**  
+        Mulai dari **base value** → Ikuti panah naik/turun → Sampai di **prediksi akhir**
+        
+        **Contoh:**  
+        Jika base value = 90%, lalu "Region_Jawa" menambah +10%, dan "Pertumbuhan_Pengumpulan" menambah +5%, 
+        maka prediksi akhir = 90% + 10% + 5% = 105%
         """)
-
-        # Hitung SHAP value khusus untuk satu data input ini
+        
+        # Hitung SHAP value untuk input ini
         shap_values_single = explainer.shap_values(input_processed)
         
-        # Membuat objek Explanation agar kompatibel dengan waterfall plot
+        # Membuat Explanation object
         explanation = shap.Explanation(
             values=shap_values_single[0], 
             base_values=explainer.expected_value, 
@@ -341,31 +674,151 @@ with tab4:
             feature_names=list(input_processed.columns)
         )
         
-        # Tampilkan Grafik Waterfall dengan ukuran lebih besar
+        # Render Waterfall Plot
         fig_waterfall = plt.figure(figsize=(12, 8))
         shap.plots.waterfall(explanation, show=False, max_display=15)
+        plt.title(f"SHAP Waterfall Plot: Penjelasan Prediksi ACR = {pred_acr:.2f}%", 
+                 fontsize=14, fontweight='bold', pad=20)
         plt.tight_layout()
-        st.pyplot(fig_waterfall)
+        st.pyplot(fig_waterfall, clear_figure=True)
         plt.close()
         
-        # Insight tambahan
+        st.caption("💡 **Tip:** Grafik ini menunjukkan transparansi penuh tentang bagaimana model mengambil keputusan.")
+        
         st.write("---")
+        
+        # Insight & Rekomendasi
         st.write("### 📝 Insight & Rekomendasi")
         
-        # Ambil 3 fitur paling berpengaruh
+        # Analisis kontribusi fitur
         shap_contribution = pd.DataFrame({
             'Fitur': input_processed.columns,
-            'Kontribusi SHAP': shap_values_single[0]
-        }).sort_values(by='Kontribusi SHAP', key=abs, ascending=False).head(3)
+            'Kontribusi SHAP': shap_values_single[0],
+            'Nilai Fitur': input_processed.iloc[0].values
+        }).sort_values(by='Kontribusi SHAP', key=abs, ascending=False)
         
-        st.markdown("**3 Fitur Paling Berpengaruh pada Prediksi Ini:**")
-        for idx, row in shap_contribution.iterrows():
+        # Filter hanya fitur yang aktif (nilai = 1 untuk categorical, atau non-zero untuk numerical)
+        active_features = shap_contribution[shap_contribution['Nilai Fitur'] != 0].head(5)
+        
+        st.markdown("#### 🔝 Fitur yang Paling Berpengaruh pada Prediksi Ini:")
+        
+        for idx, row in active_features.iterrows():
             impact = "meningkatkan" if row['Kontribusi SHAP'] > 0 else "menurunkan"
-            st.write(f"- **{row['Fitur']}**: {impact} ACR sebesar {abs(row['Kontribusi SHAP']):.2f} poin")
+            arrow = "↑" if row['Kontribusi SHAP'] > 0 else "↓"
+            color_badge = "🟢" if row['Kontribusi SHAP'] > 0 else "🔴"
+            
+            st.markdown(f"""
+            {color_badge} **{row['Fitur']}**  
+            {arrow} {impact.capitalize()} ACR sebesar **{abs(row['Kontribusi SHAP']):.2f} poin**
+            """)
+        
+        st.write("---")
+        
+        st.markdown("#### 💡 Rekomendasi Strategis:")
+        
+        # Analisis berdasarkan hasil prediksi
+        if pred_acr < 80:
+            st.warning("""
+            **⚠️ ACR di bawah 80% - Perlu Perbaikan:**
+            
+            1. **Tingkatkan Efisiensi Penyaluran:**
+               - Review proses penyaluran dana
+               - Identifikasi bottleneck operasional
+               - Perkuat koordinasi dengan penerima manfaat
+            
+            2. **Optimalkan Strategi Pengumpulan:**
+               - Sesuaikan target pengumpulan dengan kapasitas penyaluran
+               - Diversifikasi sumber dana
+            
+            3. **Benchmark dengan UPZ Terbaik:**
+               - Pelajari best practices dari UPZ dengan ACR tinggi di region yang sama
+            """)
+        elif pred_acr < 100:
+            st.info("""
+            **ℹ️ ACR 80-99% - Kinerja Baik, Bisa Ditingkatkan:**
+            
+            1. **Targetkan ACR ≥ 100%:**
+               - Tingkatkan kecepatan penyaluran
+               - Identifikasi program penyaluran baru
+            
+            2. **Jaga Pertumbuhan Stabil:**
+               - Maintain momentum pertumbuhan pengumpulan
+               - Perkuat hubungan dengan donatur
+            
+            3. **Monitor KPI:**
+               - Tracking ACR bulanan
+               - Set target improvement 5-10% per tahun
+            """)
+        else:
+            st.success("""
+            **✅ ACR ≥ 100% - Kinerja Excellent!**
+            
+            1. **Pertahankan Kinerja:**
+               - Dokumentasikan best practices
+               - Share knowledge dengan UPZ lain
+            
+            2. **Ekspansi Program:**
+               - Kembangkan program penyaluran inovatif
+               - Perluas jangkauan penerima manfaat
+            
+            3. **Sustainability:**
+               - Pastikan pertumbuhan berkelanjutan
+               - Jaga kualitas penyaluran
+            """)
+        
+        st.write("---")
+        
+        st.markdown("#### 📊 Bandingkan dengan Data Aktual")
+        
+        # Cari UPZ dengan karakteristik serupa
+        similar_upz = df[
+            (df['Region'] == input_region) & 
+            (df['Dominasi_Dana_2023'] == input_dominasi)
+        ]
+        
+        if len(similar_upz) > 0:
+            st.markdown(f"""
+            **UPZ dengan karakteristik serupa (Region: {input_region}, Dominasi: {input_dominasi}):**
+            """)
+            
+            comparison_df = similar_upz[['Wilayah', 'ACR_2023_Persen', 'Status_Kesehatan_2023', 'Pertumbuhan_Pengumpulan_Persen']].copy()
+            comparison_df.columns = ['Wilayah', 'ACR Aktual (%)', 'Status', 'Pertumbuhan (%)']
+            
+            st.dataframe(comparison_df.style.format({
+                'ACR Aktual (%)': '{:.2f}',
+                'Pertumbuhan (%)': '{:.2f}'
+            }), use_container_width=True)
+            
+            avg_acr_similar = similar_upz['ACR_2023_Persen'].mean()
+            st.metric(
+                "Rata-rata ACR UPZ Serupa",
+                f"{avg_acr_similar:.2f}%",
+                f"{pred_acr - avg_acr_similar:.2f}% vs prediksi Anda"
+            )
+        else:
+            st.info("Tidak ada UPZ dengan karakteristik persis sama dalam data historis.")
+        
+        st.write("---")
+        
+        st.markdown("""
+        ### 🎓 Kesimpulan
+        
+        Simulasi ini menunjukkan bahwa model machine learning dapat membantu:
+        - 🎯 **Prediksi proaktif** kesehatan finansial UPZ
+        - 🔍 **Transparansi penuh** tentang faktor-faktor yang mempengaruhi ACR
+        - 💡 **Rekomendasi data-driven** untuk perbaikan strategi
+        
+        **Next Steps:**
+        1. Validasi prediksi dengan data aktual
+        2. Gunakan insight SHAP untuk perbaikan operasional
+        3. Monitor ACR secara berkala dan adjust strategi
+        """)
 
 st.markdown("---")
 st.markdown("""
-<div style='text-align: center; color: gray;'>
-    <p>Dashboard XAI BAZNAS | Powered by Streamlit, Scikit-learn & SHAP</p>
+<div style='text-align: center; color: gray; padding: 20px;'>
+    <p><strong>Dashboard XAI BAZNAS</strong></p>
+    <p>Powered by Streamlit, Scikit-learn & SHAP | Explainable AI for Financial Health Evaluation</p>
+    <p>© 2025 | Data: BAZNAS Indonesia</p>
 </div>
 """, unsafe_allow_html=True)
