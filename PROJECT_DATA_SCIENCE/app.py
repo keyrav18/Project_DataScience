@@ -1,12 +1,3 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import io
-import matplotlib.pyplot as plt
-import seaborn as sns
-import shap
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 # ==============================================================================
 # 1. KONFIGURASI HALAMAN
