@@ -27,6 +27,7 @@ Aplikasi ini menggunakan **Machine Learning (Regresi Linear)** yang dijelaskan d
 # ==============================================================================
 @st.cache_data
 def load_data():
+    # Data hardcoded agar deploy stabil tanpa upload file manual
     csv_data = """Wilayah,Zakat_Maal_2022,Zakat_Maal_2023,Zakat_Fitrah_2022,Zakat_Fitrah_2023,Infak_2022,Infak_2023,DSKL_2022,DSKL_2023,Penyaluran_2022,Penyaluran_2023,Total_Pengumpulan_2022,Total_Pengumpulan_2023,Pertumbuhan_Pengumpulan_Persen,ACR_2022_Persen,ACR_2023_Persen,Status_Kesehatan_2022,Status_Kesehatan_2023,Dominasi_Dana_2023,Region
 BAZNAS (Pusat),536640868868,645538065987,9656466631,11190355084,70230370082,306840514386,17340431740,14587006023,584585478559,675091571281,633868137321,978155941480,54.32,92.23,69.02,Sangat Efektif,Cukup Efektif,Maal,Pusat
 Nanggroe Aceh Darussalam,132179974814,175481487955,0,54641000,63389684576,65804768917,2135000,302850225,201380315240,285407294532,195571794390,241643748097,23.56,102.97,118.11,Sangat Efektif,Sangat Efektif,Maal,Sumatera
@@ -86,6 +87,10 @@ model.fit(X_processed, y)
 y_pred = model.predict(X_processed)
 r2 = r2_score(y, y_pred)
 
+# Init Explainer di awal (Global)
+explainer = shap.LinearExplainer(model, X_processed)
+shap_values = explainer.shap_values(X_processed)
+
 # ==============================================================================
 # 4. TAMPILAN DASHBOARD
 # ==============================================================================
@@ -129,17 +134,14 @@ with tab2:
 with tab3:
     st.subheader("Interpretasi Model dengan SHAP")
     
-    explainer = shap.LinearExplainer(model, X_processed)
-    shap_values = explainer.shap_values(X_processed)
-    
     st.write("**1. Summary Plot (Beeswarm)**")
     st.write("Grafik ini menunjukkan fitur mana yang paling penting. Warna merah = nilai fitur tinggi, Biru = rendah.")
-    fig_shap, ax_shap = plt.subplots()
+    fig_shap, ax_shap = plt.subplots(figsize=(10,6))
     shap.summary_plot(shap_values, X_processed, show=False)
     st.pyplot(fig_shap)
 
     st.write("**2. Bar Plot (Ranking)**")
-    fig_bar, ax_bar = plt.subplots()
+    fig_bar, ax_bar = plt.subplots(figsize=(10,6))
     shap.summary_plot(shap_values, X_processed, plot_type="bar", show=False)
     st.pyplot(fig_bar)
 
@@ -156,29 +158,45 @@ with tab4:
         input_pertumbuhan = st.number_input("Pertumbuhan Pengumpulan (%)", value=10.0)
 
     if st.button("Prediksi ACR"):
-        # Siapkan data input
+        # 1. Siapkan data input
         input_data = pd.DataFrame({
             'Region': [input_region],
             'Dominasi_Dana_2023': [input_dominasi],
             'Pertumbuhan_Pengumpulan_Persen': [input_pertumbuhan]
         })
         
-        # Preprocessing input agar sesuai dengan format training
+        # 2. Preprocessing input agar sesuai dengan format training
         input_processed = pd.get_dummies(input_data, columns=['Region', 'Dominasi_Dana_2023'], drop_first=False)
+        
         # Menambahkan kolom yang hilang (jika ada) dengan nilai 0
         for col in X_processed.columns:
             if col not in input_processed.columns:
                 input_processed[col] = 0
+        
         # Urutkan kolom sesuai data training
         input_processed = input_processed[X_processed.columns]
         
-        # Prediksi
+        # 3. Prediksi
         pred_acr = model.predict(input_processed)[0]
         
         st.success(f"Prediksi Allocation to Collection Ratio (ACR): **{pred_acr:.2f}%**")
         
-        # Penjelasan Lokal untuk prediksi ini
-        st.write("Mengapa model memprediksi angka tersebut?")
-        fig_force, ax_force = plt.subplots(figsize=(10,3))
-        shap.force_plot(explainer.expected_value, shap_values[0], input_processed.iloc[0], matplotlib=True, show=False)
-        st.pyplot(fig_force)
+        # 4. Penjelasan Lokal (FIXED: Menggunakan Waterfall Plot)
+        st.subheader("Mengapa model memprediksi angka tersebut?")
+        st.write("Grafik di bawah ini (Waterfall Plot) menunjukkan bagaimana setiap fitur menambah atau mengurangi skor dasar (base value) hingga mencapai angka prediksi akhir.")
+
+        # Hitung SHAP value khusus untuk satu data input ini
+        shap_values_single = explainer.shap_values(input_processed)
+        
+        # Membuat objek Explanation agar kompatibel dengan waterfall plot
+        explanation = shap.Explanation(
+            values=shap_values_single[0], 
+            base_values=explainer.expected_value, 
+            data=input_processed.iloc[0], 
+            feature_names=input_processed.columns
+        )
+        
+        # Tampilkan Grafik Waterfall
+        fig_waterfall = plt.figure(figsize=(8, 6))
+        shap.plots.waterfall(explanation, show=False)
+        st.pyplot(fig_waterfall)
